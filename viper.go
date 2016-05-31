@@ -414,11 +414,19 @@ func (v *Viper) searchMap(source map[string]interface{}, path []string) interfac
 	if ok {
 		switch next.(type) {
 		case map[interface{}]interface{}:
-			return v.searchMap(cast.ToStringMap(next), path[1:])
+			if len(path) > 1 {
+				return v.searchMap(cast.ToStringMap(next), path[1:])
+			} else {
+				return next
+			}
 		case map[string]interface{}:
 			// Type assertion is safe here since it is only reached
 			// if the type of `next` is the same as the type being asserted
-			return v.searchMap(next.(map[string]interface{}), path[1:])
+			if len(path) > 1 {
+				return v.searchMap(next.(map[string]interface{}), path[1:])
+			} else {
+				return next
+			}
 		default:
 			return next
 		}
@@ -455,19 +463,8 @@ func (v *Viper) SetTypeByDefaultValue(enable bool) {
 // Get returns an interface. For a specific value use one of the Get____ methods.
 func Get(key string) interface{} { return v.Get(key) }
 func (v *Viper) Get(key string) interface{} {
-	path := strings.Split(key, v.keyDelim)
-
 	lcaseKey := strings.ToLower(key)
 	val := v.find(lcaseKey)
-
-	if val == nil {
-		source := v.find(strings.ToLower(path[0]))
-		if source != nil {
-			if reflect.TypeOf(source).Kind() == reflect.Map {
-				val = v.searchMap(cast.ToStringMap(source), path[1:])
-			}
-		}
-	}
 
 	// if no other value is returned and a flag does exist for the value,
 	// get the flag's value even if the flag's value has not changed
@@ -747,8 +744,17 @@ func (v *Viper) find(key string) interface{} {
 		}
 	}
 
-	val, exists = v.override[key]
-	if exists {
+	path := strings.Split(key, v.keyDelim)
+	searchKey := func(source map[string]interface{}) interface{} {
+		if val, exists := source[key]; exists {
+			return val
+		} else if val := v.searchMap(source, path); val != nil {
+			return val
+		}
+		return nil
+	}
+
+	if val := searchKey(v.override); val != nil {
 		jww.TRACE.Println(key, "found in override:", val)
 		return val
 	}
@@ -773,34 +779,17 @@ func (v *Viper) find(key string) interface{} {
 		}
 	}
 
-	val, exists = v.config[key]
-	if exists {
+	if val := searchKey(v.config); val != nil {
 		jww.TRACE.Println(key, "found in config:", val)
 		return val
 	}
 
-	// Test for nested config parameter
-	if strings.Contains(key, v.keyDelim) {
-		path := strings.Split(key, v.keyDelim)
-
-		source := v.find(path[0])
-		if source != nil {
-			if reflect.TypeOf(source).Kind() == reflect.Map {
-				val := v.searchMap(cast.ToStringMap(source), path[1:])
-				jww.TRACE.Println(key, "found in nested config:", val)
-				return val
-			}
-		}
-	}
-
-	val, exists = v.kvstore[key]
-	if exists {
+	if val := searchKey(v.kvstore); val != nil {
 		jww.TRACE.Println(key, "found in key/value store:", val)
 		return val
 	}
 
-	val, exists = v.defaults[key]
-	if exists {
+	if val := searchKey(v.defaults); val != nil {
 		jww.TRACE.Println(key, "found in defaults:", val)
 		return val
 	}
@@ -811,21 +800,7 @@ func (v *Viper) find(key string) interface{} {
 // Check to see if the key has been set in any of the data locations
 func IsSet(key string) bool { return v.IsSet(key) }
 func (v *Viper) IsSet(key string) bool {
-	path := strings.Split(key, v.keyDelim)
-
-	lcaseKey := strings.ToLower(key)
-	val := v.find(lcaseKey)
-
-	if val == nil {
-		source := v.find(strings.ToLower(path[0]))
-		if source != nil {
-			if reflect.TypeOf(source).Kind() == reflect.Map {
-				val = v.searchMap(cast.ToStringMap(source), path[1:])
-			}
-		}
-	}
-
-	return val != nil
+	return v.find(strings.ToLower(key)) != nil
 }
 
 // Have Viper check ENV variables for all
